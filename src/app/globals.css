@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 250 250 250;
+  --surface: 255 255 255;
+  --border: 229 231 235;
+  --text: 17 24 39;
+  --muted: 107 114 128;
+  --accent: 59 130 246;
+}
+
+.dark {
+  --bg: 10 10 12;
+  --surface: 22 22 26;
+  --border: 38 38 44;
+  --text: 240 240 244;
+  --muted: 150 150 160;
+  --accent: 96 165 250;
+}
+
+html,
+body {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}

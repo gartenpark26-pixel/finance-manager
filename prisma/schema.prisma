@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Portfolio {
+  id        String    @id @default(cuid())
+  name      String
+  color     String
+  holdings  Holding[]
+  createdAt DateTime  @default(now())
+}
+
+model Holding {
+  id          String    @id @default(cuid())
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  portfolioId String
+  ticker      String
+  name        String
+  quantity    Float
+  avgPrice    Float
+  currency    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([portfolioId])
+}
+
+model PriceCache {
+  ticker    String   @id
+  price     Float
+  currency  String
+  fetchedAt DateTime
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  date      DateTime
+  amount    Float
+  category  String
+  memo      String?
+  createdAt DateTime @default(now())
+
+  @@index([date])
+  @@index([category])
+}
+
+model Category {
+  id    String @id @default(cuid())
+  name  String @unique
+  icon  String
+  color String
+}
+
+model AppConfig {
+  key   String @id
+  value String
+}
