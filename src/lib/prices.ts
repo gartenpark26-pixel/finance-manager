@@ -45,25 +45,35 @@ export async function getQuotes(tickers: string[]): Promise<QuoteResult[]> {
   }
 
   if (needFetch.length > 0) {
-    try {
-      const quotes = await yahooFinance.quote(needFetch, {}, yahooModuleOptions);
-      const arr = Array.isArray(quotes) ? quotes : [quotes];
-      for (const q of arr) {
-        const ticker = q.symbol;
-        const price = q.regularMarketPrice;
-        const currency = q.currency || "USD";
-        if (ticker && typeof price === "number") {
-          const fetched = new Date();
-          await prisma.priceCache.upsert({
-            where: { ticker },
-            update: { price, currency, fetchedAt: fetched },
-            create: { ticker, price, currency, fetchedAt: fetched },
-          });
-          cacheMap.set(ticker, { ticker, price, currency, fetchedAt: fetched });
-        }
+    // Use the `chart` endpoint instead of `quote`: `quote` requires a Yahoo
+    // crumb+cookie handshake that fails on serverless (Vercel) with
+    // "No set-cookie header present in Yahoo's response", whereas `chart`
+    // needs only a browser User-Agent. chart() takes one symbol at a time.
+    const period1 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const fetched = new Date();
+    const settled = await Promise.allSettled(
+      needFetch.map((ticker) =>
+        yahooFinance
+          .chart(ticker, { period1, interval: "1d" }, yahooModuleOptions)
+          .then((res: any) => ({ ticker, meta: res?.meta }))
+      )
+    );
+    for (const r of settled) {
+      if (r.status !== "fulfilled") {
+        console.error("Chart fetch failed", (r as PromiseRejectedResult).reason);
+        continue;
       }
-    } catch (e) {
-      console.error("Quote fetch failed", e);
+      const { ticker, meta } = r.value;
+      const price = meta?.regularMarketPrice;
+      const currency = meta?.currency || "USD";
+      if (ticker && typeof price === "number") {
+        await prisma.priceCache.upsert({
+          where: { ticker },
+          update: { price, currency, fetchedAt: fetched },
+          create: { ticker, price, currency, fetchedAt: fetched },
+        });
+        cacheMap.set(ticker, { ticker, price, currency, fetchedAt: fetched });
+      }
     }
   }
 

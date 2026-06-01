@@ -9,8 +9,15 @@ export async function getUsdKrw(): Promise<number> {
   if (cached && isFresh(cached.fetchedAt)) return cached.price;
 
   try {
-    const q = await yahooFinance.quote(FX_TICKER, {}, yahooModuleOptions);
-    const price = q.regularMarketPrice ?? cached?.price;
+    // `chart` (not `quote`) avoids the crumb/cookie handshake that fails on
+    // serverless. meta.regularMarketPrice carries the latest USD/KRW rate.
+    const period1 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const res: any = await yahooFinance.chart(
+      FX_TICKER,
+      { period1, interval: "1d" },
+      yahooModuleOptions
+    );
+    const price = res?.meta?.regularMarketPrice ?? cached?.price;
     if (typeof price === "number") {
       await prisma.priceCache.upsert({
         where: { ticker: FX_CACHE_KEY },
