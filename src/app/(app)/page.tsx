@@ -1,11 +1,15 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
 import { getQuotes } from "@/lib/prices";
 import { getUsdKrw } from "@/lib/fx";
 import { Card, StatCard } from "@/components/Card";
+import { StatCardSkeleton, PortfolioCardsSkeleton } from "@/components/Skeleton";
 import { formatKRW, formatDateShort } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
+
+type PortfolioWithHoldings = Awaited<ReturnType<typeof loadPortfolios>>[number];
 
 function startOfMonth() {
   const d = new Date();
@@ -16,28 +20,23 @@ function endOfMonth() {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
 }
 
-export default async function DashboardPage() {
-  const [portfolios, monthExpenses, recentExpenses] = await Promise.all([
-    prisma.portfolio.findMany({
-      orderBy: { createdAt: "asc" },
-      include: { holdings: true },
-    }),
-    prisma.expense.aggregate({
-      _sum: { amount: true },
-      where: { date: { gte: startOfMonth(), lte: endOfMonth() } },
-    }),
-    prisma.expense.findMany({
-      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-      take: 5,
-    }),
-  ]);
+function loadPortfolios() {
+  return prisma.portfolio.findMany({
+    orderBy: { createdAt: "asc" },
+    include: { holdings: true },
+  });
+}
 
-  const tickers = Array.from(
-    new Set(portfolios.flatMap((p) => p.holdings.map((h) => h.ticker)))
-  );
+// Fetch all price data once; shared (awaited) by both streamed sections so
+// Yahoo is queried a single time per request.
+async function getPricing(tickers: string[]) {
   const [quotes, usdKrw] = await Promise.all([getQuotes(tickers), getUsdKrw()]);
-  const priceMap = new Map(quotes.map((q) => [q.ticker, q]));
+  return { priceMap: new Map(quotes.map((q) => [q.ticker, q])), usdKrw };
+}
 
+type Pricing = Awaited<ReturnType<typeof getPricing>>;
+
+function valuation(portfolios: PortfolioWithHoldings[], { priceMap, usdKrw }: Pricing) {
   let grandTotalKrw = 0;
   const cards = portfolios.map((p) => {
     let valueKrw = 0;
@@ -60,7 +59,96 @@ export default async function DashboardPage() {
     const plPct = costKrw > 0 ? (pl / costKrw) * 100 : 0;
     return { portfolio: p, valueKrw, costKrw, pl, plPct };
   });
+  return { grandTotalKrw, cards };
+}
 
+async function GrandTotalCard({
+  portfolios,
+  pricing,
+}: {
+  portfolios: PortfolioWithHoldings[];
+  pricing: Promise<Pricing>;
+}) {
+  const p = await pricing;
+  const { grandTotalKrw } = valuation(portfolios, p);
+  return (
+    <StatCard
+      label="전체 평가금액 (KRW 환산)"
+      value={formatKRW(grandTotalKrw)}
+      hint={`USD/KRW ${p.usdKrw.toFixed(2)}`}
+    />
+  );
+}
+
+async function PortfolioCards({
+  portfolios,
+  pricing,
+}: {
+  portfolios: PortfolioWithHoldings[];
+  pricing: Promise<Pricing>;
+}) {
+  const p = await pricing;
+  const { cards } = valuation(portfolios, p);
+
+  if (cards.length === 0) {
+    return (
+      <Card>
+        <p className="text-muted text-sm">아직 포트폴리오가 없습니다.</p>
+        <Link href="/settings" className="text-accent text-sm">
+          설정에서 추가하기 →
+        </Link>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {cards.map((c) => (
+        <Card key={c.portfolio.id}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-full"
+                style={{ background: c.portfolio.color }}
+              />
+              <span className="font-medium">{c.portfolio.name}</span>
+            </div>
+            <span className="text-xs text-muted">{c.portfolio.holdings.length}개 종목</span>
+          </div>
+          <div className="mt-2 text-xl font-semibold">{formatKRW(c.valueKrw)}</div>
+          <div
+            className={`text-sm mt-0.5 ${
+              c.pl >= 0 ? "text-emerald-500" : "text-red-500"
+            }`}
+          >
+            {c.pl >= 0 ? "+" : ""}
+            {formatKRW(c.pl)} ({c.plPct.toFixed(2)}%)
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+export default async function DashboardPage() {
+  // Fast, DB-only queries — these render immediately.
+  const [portfolios, monthExpenses, recentExpenses] = await Promise.all([
+    loadPortfolios(),
+    prisma.expense.aggregate({
+      _sum: { amount: true },
+      where: { date: { gte: startOfMonth(), lte: endOfMonth() } },
+    }),
+    prisma.expense.findMany({
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      take: 5,
+    }),
+  ]);
+
+  const tickers = Array.from(
+    new Set(portfolios.flatMap((p) => p.holdings.map((h) => h.ticker)))
+  );
+  // Kick off price fetching but DON'T await here — let it stream.
+  const pricing = getPricing(tickers);
   const monthTotal = monthExpenses._sum.amount ?? 0;
 
   return (
@@ -68,11 +156,9 @@ export default async function DashboardPage() {
       <h1 className="text-2xl font-semibold tracking-tight">대시보드</h1>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <StatCard
-          label="전체 평가금액 (KRW 환산)"
-          value={formatKRW(grandTotalKrw)}
-          hint={`USD/KRW ${usdKrw.toFixed(2)}`}
-        />
+        <Suspense fallback={<StatCardSkeleton label="전체 평가금액 (KRW 환산)" />}>
+          <GrandTotalCard portfolios={portfolios} pricing={pricing} />
+        </Suspense>
         <StatCard label="이번 달 지출" value={formatKRW(monthTotal)} />
       </div>
 
@@ -83,39 +169,9 @@ export default async function DashboardPage() {
             전체 보기
           </Link>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {cards.length === 0 && (
-            <Card>
-              <p className="text-muted text-sm">아직 포트폴리오가 없습니다.</p>
-              <Link href="/settings" className="text-accent text-sm">
-                설정에서 추가하기 →
-              </Link>
-            </Card>
-          )}
-          {cards.map((c) => (
-            <Card key={c.portfolio.id}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="inline-block w-2.5 h-2.5 rounded-full"
-                    style={{ background: c.portfolio.color }}
-                  />
-                  <span className="font-medium">{c.portfolio.name}</span>
-                </div>
-                <span className="text-xs text-muted">{c.portfolio.holdings.length}개 종목</span>
-              </div>
-              <div className="mt-2 text-xl font-semibold">{formatKRW(c.valueKrw)}</div>
-              <div
-                className={`text-sm mt-0.5 ${
-                  c.pl >= 0 ? "text-emerald-500" : "text-red-500"
-                }`}
-              >
-                {c.pl >= 0 ? "+" : ""}
-                {formatKRW(c.pl)} ({c.plPct.toFixed(2)}%)
-              </div>
-            </Card>
-          ))}
-        </div>
+        <Suspense fallback={<PortfolioCardsSkeleton count={portfolios.length || 2} />}>
+          <PortfolioCards portfolios={portfolios} pricing={pricing} />
+        </Suspense>
       </section>
 
       <section>
