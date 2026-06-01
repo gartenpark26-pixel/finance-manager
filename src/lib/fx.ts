@@ -1,5 +1,5 @@
-import yahooFinance from "yahoo-finance2";
 import { prisma } from "./prisma";
+import { yahooFinance, yahooModuleOptions } from "./yahoo";
 
 const FX_TICKER = "KRW=X";
 const FX_CACHE_KEY = "USDKRW";
@@ -9,8 +9,7 @@ export async function getUsdKrw(): Promise<number> {
   if (cached && isFresh(cached.fetchedAt)) return cached.price;
 
   try {
-    yahooFinance.suppressNotices(["yahooSurvey"]);
-    const q = await yahooFinance.quote(FX_TICKER);
+    const q = await yahooFinance.quote(FX_TICKER, {}, yahooModuleOptions);
     const price = q.regularMarketPrice ?? cached?.price;
     if (typeof price === "number") {
       await prisma.priceCache.upsert({

@@ -1,5 +1,15 @@
-import yahooFinance from "yahoo-finance2";
 import { prisma } from "./prisma";
+import { yahooFinance, yahooModuleOptions } from "./yahoo";
+
+export type SymbolSearchResponse = {
+  results: {
+    symbol: string;
+    name: string;
+    exchange?: string;
+    type?: string;
+  }[];
+  error?: string;
+};
 
 type QuoteResult = {
   ticker: string;
@@ -36,8 +46,7 @@ export async function getQuotes(tickers: string[]): Promise<QuoteResult[]> {
 
   if (needFetch.length > 0) {
     try {
-      yahooFinance.suppressNotices(["yahooSurvey"]);
-      const quotes = await yahooFinance.quote(needFetch);
+      const quotes = await yahooFinance.quote(needFetch, {}, yahooModuleOptions);
       const arr = Array.isArray(quotes) ? quotes : [quotes];
       for (const q of arr) {
         const ticker = q.symbol;
@@ -71,11 +80,19 @@ export async function getQuotes(tickers: string[]): Promise<QuoteResult[]> {
   });
 }
 
-export async function searchSymbols(query: string) {
+const HAS_HANGUL = /[ㄱ-힝]/;
+
+export async function searchSymbols(query: string): Promise<SymbolSearchResponse> {
+  const trimmed = query.trim();
+  if (!trimmed) return { results: [] };
+
   try {
-    yahooFinance.suppressNotices(["yahooSurvey"]);
-    const res = await yahooFinance.search(query, { quotesCount: 10, newsCount: 0 });
-    return (res.quotes || [])
+    const res = await yahooFinance.search(
+      trimmed,
+      { quotesCount: 10, newsCount: 0 },
+      yahooModuleOptions
+    );
+    const results = (res.quotes || [])
       .filter((q: any) => q.symbol && (q.shortname || q.longname))
       .map((q: any) => ({
         symbol: q.symbol as string,
@@ -83,8 +100,23 @@ export async function searchSymbols(query: string) {
         exchange: q.exchDisp as string | undefined,
         type: q.quoteType as string | undefined,
       }));
+
+    if (results.length === 0 && HAS_HANGUL.test(trimmed)) {
+      return {
+        results: [],
+        error: "한글 검색은 지원되지 않습니다. 영문 종목명이나 티커(예: 005930.KS, AAPL)로 검색해 주세요.",
+      };
+    }
+    return { results };
   } catch (e) {
     console.error("Symbol search failed", e);
-    return [];
+    // Yahoo rejects most non-Latin queries with an error response.
+    if (HAS_HANGUL.test(trimmed)) {
+      return {
+        results: [],
+        error: "한글 검색은 지원되지 않습니다. 영문 종목명이나 티커(예: 005930.KS, AAPL)로 검색해 주세요.",
+      };
+    }
+    return { results: [], error: "검색에 실패했습니다. 잠시 후 다시 시도해 주세요." };
   }
 }

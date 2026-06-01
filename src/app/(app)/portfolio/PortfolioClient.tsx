@@ -349,15 +349,31 @@ function HoldingFormModal({
     { symbol: string; name: string; exchange?: string }[]
   >([]);
   const [searching, setSearching] = useState(false);
+  const [searchMsg, setSearchMsg] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
 
   async function runSearch() {
     if (!ticker.trim()) return;
     setSearching(true);
+    setSearchMsg(null);
     try {
-      const res = await fetchJSON<any[]>(
-        `/api/symbols/search?q=${encodeURIComponent(ticker.trim())}`
-      );
-      setSearchResults(res);
+      const res = await fetchJSON<{
+        results: { symbol: string; name: string; exchange?: string }[];
+        error?: string;
+      }>(`/api/symbols/search?q=${encodeURIComponent(ticker.trim())}`);
+      setSearchResults(res.results || []);
+      setSearched(true);
+      if (res.error) {
+        setSearchMsg(res.error);
+      } else if ((res.results || []).length === 0) {
+        setSearchMsg(
+          "검색 결과가 없습니다. 티커를 직접 입력해도 됩니다 (예: 005930.KS, AAPL)."
+        );
+      }
+    } catch {
+      setSearchResults([]);
+      setSearched(true);
+      setSearchMsg("검색에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
       setSearching(false);
     }
@@ -415,18 +431,28 @@ function HoldingFormModal({
             </select>
           </Field>
         )}
-        <Field label="티커 (예: 005930.KS, AAPL)">
+        <Field label="티커 또는 영문 종목명으로 검색 (예: 005930.KS, AAPL, Samsung)">
           <div className="flex gap-2">
             <input
               value={ticker}
-              onChange={(e) => setTicker(e.target.value)}
+              onChange={(e) => {
+                setTicker(e.target.value);
+                setSearchMsg(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  runSearch();
+                }
+              }}
               className="input flex-1"
               placeholder="AAPL"
             />
             <button
               type="button"
               onClick={runSearch}
-              className="rounded-xl border border-border px-3 text-sm"
+              disabled={searching || !ticker.trim()}
+              className="rounded-xl border border-border px-3 text-sm disabled:opacity-50"
             >
               {searching ? <Spinner size={14} /> : "검색"}
             </button>
@@ -442,6 +468,8 @@ function HoldingFormModal({
                   setTicker(r.symbol);
                   setName(r.name);
                   setSearchResults([]);
+                  setSearchMsg(null);
+                  setSearched(false);
                 }}
                 className="w-full text-left px-3 py-2 hover:bg-bg flex items-center justify-between"
               >
@@ -450,6 +478,9 @@ function HoldingFormModal({
               </button>
             ))}
           </div>
+        )}
+        {searched && searchMsg && (
+          <p className="text-xs text-amber-500">{searchMsg}</p>
         )}
         <Field label="종목명">
           <input

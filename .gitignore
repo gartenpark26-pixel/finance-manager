@@ -9,3 +9,5 @@ build
 /prisma/migrations/dev.db*
 tsconfig.tsbuildinfo
 .vercel
+
+.vercel

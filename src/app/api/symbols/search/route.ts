@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   const unauth = await requireSession();
   if (unauth) return unauth;
   const q = req.nextUrl.searchParams.get("q") || "";
-  if (q.trim().length === 0) return NextResponse.json([]);
-  const results = await searchSymbols(q);
-  return NextResponse.json(results);
+  if (q.trim().length === 0) return NextResponse.json({ results: [] });
+  const data = await searchSymbols(q);
+  return NextResponse.json(data);
 }
